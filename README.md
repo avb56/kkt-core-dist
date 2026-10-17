@@ -21,8 +21,13 @@
 Браузер — файл рядом со страницей, модулем:
 
 ```js
-const { KKT, configure } = await import('/vendor/kkt-core.mjs');
+const { KKT, configure } = await import('/vendor/kkt-core.js');
 ```
+
+Веб-сервер должен отдавать файл с типом `application/javascript` (или
+`text/javascript`): модуль другого типа браузер не загружает. nginx не знает
+расширения `.mjs` и отдаёт его как `application/octet-stream`, поэтому проще
+положить файл под именем `kkt-core.js` — как это сделано в кассе kktsite.
 
 Node — npm-архивом выпуска (`npm i https://github.com/avb56/kkt-core-dist/releases/download/vX.Y.Z/kkt-core-X.Y.Z.tgz`):
 
@@ -46,25 +51,84 @@ const { KKT, configure } = require('kkt-core');
 | `pConfirm` | «нет» | `(текст) → Promise<boolean>` — прервать долгое ожидание результата сервера? |
 | `fOnResults` | — | `(результаты, ккт)` — после каждого удачного задания |
 | `sTelePortUrl` | — | WebSocket «телепорта»: порт ККТ на другой машине |
+| `policy` | — | разрешение на работу ККТ: ключ лицензии и сервер — см. «Разрешение на работу» |
 
 ## ККТ
 
 ```js
 // Web Serial (выбор порта браузер показывает по нажатию пользователя)
-const oKKT = new KKT({ sConnectionType: 'comPort', sVendorOrUrl: 'auto', id: 'РНМ' });
+const oKKT = new KKT({ sConnectionType: 'comPort', sVendorOrUrl: 'auto' });
 // Web Requests АТОЛа или совместимый сервер; ?deviceID — какая ККТ сервера
-const oSrv = new KKT({ sConnectionType: 'atolSrv', sVendorOrUrl: 'http://логин:пароль@127.0.0.1:16732/api/v2/?deviceID=1', id: 'РНМ' });
+const oSrv = new KKT({ sConnectionType: 'atolSrv', sVendorOrUrl: 'http://логин:пароль@127.0.0.1:16732/api/v2/?deviceID=1' });
 // эмулятор
-const oEmu = new KKT({ sConnectionType: 'emulate', sVendorOrUrl: 'auto', id: '0000000000000000' });
+const oEmu = new KKT({ sConnectionType: 'emulate', sVendorOrUrl: 'auto' });
 
-const [oStatus] = await oKKT.pTaskSender({ type: 'getDeviceStatus' });
+// РНМ — с самой ККТ, а не от пользователя:
+const [, oReg] = await oKKT.pTaskSender([{ type: 'getDeviceInfo' }, { type: 'getRegistrationInfo' }]);
+const sRnm = oReg.device.registrationNumber;
 ```
+
+Первый аргумент конструктора — конфиг ККТ, библиотека хранит его как
+`oKKT.oConf`. Обязательны `sConnectionType` и `sVendorOrUrl`. Остальное —
+ваше: например, РНМ (`id`) после чтения с ККТ, имя (`sNameKKT`). Если
+`sNameKKT` задан, ККТ с портом считается «известной», и пропавшее соединение
+даёт ошибку «Нет связи», а не запрос выбора порта.
+
+У `atolSrv` путь API можно не писать: адрес без пути (`http://пк:16732`)
+означает `/api/v2/`. Если задание сервер уже принял, а ответ на отправку
+потерялся (сервер отвечает 409 «задание с таким uuid уже существует»),
+библиотека ждёт его результат, а не возвращает ошибку.
 
 Задания к одной ККТ на своём порту выполняются по очереди. Ошибка задания —
 исключение с текстом для человека («ККТ …: Сервер не отвечает на адресе …»).
 
 Типы подключения: `comPort` (Web Serial), `usbPort` (WebUSB), `emulate`,
 `telePort`, `atolSrv` (Web Requests / агент kktsite), `kkmSrv` (KKM Server).
+
+## Разрешение на работу
+
+Фискальные операции, маркировка и телепорт работают по разрешению сервера
+политик ККТ Сайт — как у кассы kktsite, по тем же правилам:
+
+- **ключ лицензии** — в кабинете https://lk.kktsite.ru (раздел оплаты), один
+  на учётку; новый ключ отменяет прежний;
+- **новая ККТ** — демо-период с первого обращения к серверу (срок — по
+  политике сервера, сейчас 14 дней), дальше нужно оплаченное рабочее место
+  этой учётки на этой ККТ;
+- **без связи** ККТ работает по последнему разрешению до 7 дней; за 3 дня до
+  конца — предупреждение (`fOnNotice`);
+- **без разрешения** нельзя открыть смену, пробить чек или коррекцию,
+  внести и изъять наличные, проверить код маркировки. Закрыть смену, снять
+  отчёт и опросить ККТ можно всегда. Эмулятору разрешение не нужно.
+
+```js
+configure({ policy: {
+  sLicense: 'lic_…',                                  // ключ из кабинета
+  sPolicyUrl: 'https://lk.kktsite.ru/api/policy/lease',
+  fOnNotice: ({ sType, sText, sRnm, nDaysLeft }) => …, // 'ok' | 'expiring' | 'blocked' | 'none'
+  oStore: { pGet, pSet },                             // Node: своё хранилище в файле
+  sHost: 'my-pos/2.1.0',                              // ваше приложение и версия — для статистики
+} });
+const oState = await oKKT.pPolicyState(); // { sStatus, sText, oFeatures, … }
+```
+
+Отказ — исключение с `code: 'POLICY_DENIED'` и текстом для кассира. В браузере
+разрешения и журнал хранятся в IndexedDB; в Node по умолчанию — в памяти, и
+офлайн-запас не переживёт перезапуск: задайте `oStore` (`pGet(ключ)`,
+`pSet(ключ, значение)` — значения JSON).
+
+### Что модуль сообщает серверу
+
+С каждым обменом — около 4 раз в сутки и после закрытия смены — модуль
+сообщает серверу политик:
+- **ККТ:** модель, прошивку, срок ФН, ОФД;
+- **состояние ККТ:** смена, неотправленные в ОФД документы, флаги ФН;
+- **итог смены в количествах:** чеки по типам, сколько оплачено наличными
+  или безналично, электронные чеки, позиции с маркировкой, номера ФД.
+
+**Сумм, товаров, кодов маркировки, данных покупателей и кассира, названия и ИНН
+организации модуль не передаёт.** Подробно — в `docs/policy.md` исходного
+репозитория.
 
 ## Лицензия
 
