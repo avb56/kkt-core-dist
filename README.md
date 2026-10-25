@@ -108,12 +108,15 @@ configure({ policy: {
   fOnNotice: ({ sType, sText, sRnm, nDaysLeft }) => …, // 'ok' | 'expiring' | 'blocked' | 'none'
   oStore: { pGet, pSet },                             // Node: своё хранилище в файле
   sHost: 'my-pos/2.1.0',                              // ваше приложение и версия — для статистики
+  sAgreement: '20.10.2026',                           // без принятия этой редакции фискальные операции стоят
 } });
-const oState = await oKKT.pPolicyState(); // { sStatus, sText, oFeatures, aAgreed, … }
-await oKKT.pAgreement('20.10.2026');      // пользователь ККТ принял лицензионное соглашение этой редакции
+const oState = await oKKT.pPolicyState(); // { sStatus, sText, oFeatures, aAgreed, sAgreementMissing, … }
+await oKKT.pAgreement('20.10.2026');      // пользователь ККТ принял лицензионное соглашение этой редакции ('decline' — отказался)
 ```
 
-Отказ — исключение с `code: 'POLICY_DENIED'` и текстом для кассира. В браузере
+Отказ — исключение с `code: 'POLICY_DENIED'` и текстом для кассира. Отказ
+из-за непринятого соглашения (`policy.sAgreement`) — с полем `sAgreement`:
+покажите соглашение и после принятия повторите задание. В браузере
 разрешения и журнал хранятся в IndexedDB; в Node по умолчанию — в памяти, и
 офлайн-запас не переживёт перезапуск: задайте `oStore` (`pGet(ключ)`,
 `pSet(ключ, значение)` — значения JSON).
