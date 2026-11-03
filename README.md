@@ -120,7 +120,7 @@ configure({ policy: {
   sAgreement: '20.10.2026',                           // без принятия этой редакции фискальные операции стоят
   fRnmOf: oKKT => oKKT.oConf.id,                      // РНМ ККТ, которую вы ждёте: другая на адресе — отказ
 } });
-const oState = await oKKT.pPolicyState(); // { sStatus, sText, oFeatures, aAgreed, sAgreementMissing, … }
+const oState = await oKKT.pPolicyState(); // { sStatus, sText, oFeatures, aAgreed, sAgreementMissing, sLease, oIdentity, … }
 await oKKT.pAgreement('20.10.2026');      // пользователь ККТ принял лицензионное соглашение этой редакции ('decline' — отказался)
 ```
 
